@@ -1,0 +1,7 @@
+*.urdf text eol=lf
+*.xacro text eol=lf
+*.sdf text eol=lf
+*.launch.py text eol=lf
+*.sh text eol=lf
+*.world text eol=lf
+

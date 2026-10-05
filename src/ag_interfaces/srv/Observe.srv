@@ -1,0 +1,10 @@
+# True: this observation comes from a non-home auxiliary viewpoint and
+# should be merged as the "auxiliary snapshot" of the world model.
+# False: normal observation from the home/rest pose.
+bool auxiliary_view
+---
+sensor_msgs/Image height      # 32FC1, meters above the table, shape [H, W]
+sensor_msgs/Image uncertainty # 32FC1, values in [0, 1]
+sensor_msgs/Image color       # 8UC3, mean top-surface color per cell
+sensor_msgs/Image mask        # 8UC1, 0 = unknown/free, 255 = occupied
+

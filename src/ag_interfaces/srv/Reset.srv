@@ -1,0 +1,7 @@
+# Rebuild the clutter scene with a new set of objects.
+uint32 num_objects
+bool randomize_objects
+---
+bool success
+uint32 objects_spawned
+

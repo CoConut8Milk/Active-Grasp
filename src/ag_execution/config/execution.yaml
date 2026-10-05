@@ -1,0 +1,42 @@
+execution_node:
+  ros__parameters:
+    use_sim_time: true
+    urdf_file: ""          # filled by the launch file
+    arm_action: /arm_controller/follow_joint_trajectory
+    gripper_topic: /gripper_controller/commands
+    joint_states_topic: /joint_states
+    observe_service: /perception_node/observe
+    base_link: base_link
+    tool_link: tool0
+    camera_link: camera_link
+    home_camera_pos: [0.68, 0.0, 0.62]
+    home_camera_look: [0.45, 0.0, 0.02]
+    bin_pos: [0.45, -0.34, 0.32]
+    views:
+      - {pos: [0.45, 0.00, 0.72], look: [0.45, 0.0, 0.02]}   # top-down
+      - {pos: [0.45, -0.28, 0.52], look: [0.45, 0.0, 0.02]}   # left tilt
+      - {pos: [0.45, 0.28, 0.52], look: [0.45, 0.0, 0.02]}    # right tilt
+      - {pos: [0.18, 0.00, 0.60], look: [0.45, 0.0, 0.02]}    # rear view
+    grid_x_min: 0.20
+    grid_x_max: 0.70
+    grid_y_min: -0.25
+    grid_y_max: 0.25
+    grid_width: 48
+    grid_height: 48
+    min_grasp_height: 0.008
+    gripper_close: [0.018, 0.018]
+    gripper_open: [0.0, 0.0]
+    held_q_sum: 0.033
+    approach_offset: 0.18
+    grasp_offset: 0.065
+    lift_height: 0.30
+    push_height: 0.075
+    push_length: 0.09
+    view_dwell: 1.2
+    trajectory_steps: 8
+    seed_sets:
+      - [0.0, -0.4, 1.3, -0.5, 0.0, 0.0]
+      - [0.0, -0.8, 1.6, -0.8, 0.0, 0.0]
+      - [0.5, -0.5, 1.2, -0.7, 0.0, 0.0]
+      - [-0.5, -0.5, 1.2, -0.7, 0.0, 0.0]
+      - [0.0, -1.0, 1.0, -0.9, 0.0, 0.0]

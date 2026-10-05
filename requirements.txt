@@ -1,0 +1,10 @@
+# Python dependencies installed with pip inside Ubuntu 22.04 (ROS2 Humble).
+#
+# numpy 1.26.4 is the tested version: it satisfies PyTorch while keeping the
+# NumPy 1.x C-ABI that ROS2 Humble's cv_bridge/other extensions were built
+# against. Do NOT upgrade to NumPy 2.x on Humble.
+numpy==1.26.4
+
+# PyTorch is installed separately with the CPU wheel index (see scripts/).
+# scipy, pyyaml and matplotlib come from apt packages (python3-scipy, etc.)
+# to stay consistent with the ROS distribution's C extensions.

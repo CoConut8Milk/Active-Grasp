@@ -1,0 +1,314 @@
+"""ROS node: fuses the wrist RGB-D stream into height + uncertainty maps.
+
+Services:
+  ~/observe      (ag_interfaces/Observe)  capture + fuse + return state
+  ~/clear        (std_srvs/Trigger)       clear the whole world model
+  ~/clear_aux    (std_srvs/Trigger)       drop the auxiliary-view snapshot
+
+At startup the node waits for the empty table, auto-calibrates the camera's
+image mirroring, and only then accepts requests.
+"""
+
+import threading
+import time
+
+import numpy as np
+
+import rclpy
+from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
+from sensor_msgs.msg import Image, CameraInfo, JointState
+from std_msgs.msg import Bool
+from std_srvs.srv import Trigger
+from cv_bridge import CvBridge
+from tf2_ros import Buffer, TransformListener
+from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
+
+from ag_interfaces.srv import Observe
+from ag_perception.fusion import (
+    HeightmapFusion, auto_calibrate, backproject, pose_to_matrix,
+)
+
+
+def _stamp_key(stamp):
+    return (stamp.sec, stamp.nanosec)
+
+
+class PerceptionNode(Node):
+    def __init__(self):
+        super().__init__("perception_node")
+
+        self.declare_parameter("use_sim_time", True)
+        self.declare_parameter("depth_topic", "/ag_camera/depth/image_raw")
+        self.declare_parameter("color_topic", "/ag_camera/image_raw")
+        self.declare_parameter("camera_info_topic", "/ag_camera/depth/camera_info")
+        self.declare_parameter("joint_states_topic", "/joint_states")
+        self.declare_parameter("base_frame", "base_link")
+        self.declare_parameter("camera_frame", "camera_link")
+        self.declare_parameter("grid_height", 48)
+        self.declare_parameter("grid_width", 48)
+        self.declare_parameter("workspace_x_min", 0.20)
+        self.declare_parameter("workspace_x_max", 0.70)
+        self.declare_parameter("workspace_y_min", -0.25)
+        self.declare_parameter("workspace_y_max", 0.25)
+        self.declare_parameter("z_max", 0.35)
+        self.declare_parameter("max_age", 8)
+        self.declare_parameter("stationary_velocity", 0.08)
+        self.declare_parameter("fresh_frame_timeout", 1.5)
+        self.declare_parameter("calib_max_depth", 1.1)
+        self.declare_parameter("hfov", 1.047197551)
+        self.declare_parameter("image_width", 320)
+        self.declare_parameter("image_height", 240)
+
+        p = self.get_parameter
+        self.depth_topic = p("depth_topic").value
+        self.color_topic = p("color_topic").value
+        self.camera_info_topic = p("camera_info_topic").value
+        self.joint_states_topic = p("joint_states_topic").value
+        self.base_frame = p("base_frame").value
+        self.camera_frame = p("camera_frame").value
+        self.stationary_velocity = p("stationary_velocity").value
+        self.fresh_timeout = p("fresh_frame_timeout").value
+        self.calib_max_depth = p("calib_max_depth").value
+        self.hfov = p("hfov").value
+        self.img_w = p("image_width").value
+        self.img_h = p("image_height").value
+
+        self.fusion = HeightmapFusion(
+            p("grid_height").value, p("grid_width").value,
+            p("workspace_x_min").value, p("workspace_x_max").value,
+            p("workspace_y_min").value, p("workspace_y_max").value,
+            z_max=p("z_max").value, max_age=p("max_age").value,
+        )
+
+        self.bridge = CvBridge()
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        self._cond = threading.Condition()
+        self._latest_depth = None
+        self._latest_color = None
+        self._color_size = None
+        self._latest_joint_vel = {}
+        self._last_used_stamp = None
+        self._k_matrix = None
+        self._signs = None
+        self._execution_ready = False
+        self._ready = False
+        self._ready_warned = False
+
+        qos = qos_profile_sensor_data
+        self.create_subscription(Image, self.depth_topic, self._depth_cb, qos)
+        self.create_subscription(Image, self.color_topic, self._color_cb, qos)
+        self.create_subscription(CameraInfo, self.camera_info_topic, self._info_cb, qos)
+        self.create_subscription(JointState, self.joint_states_topic, self._joint_cb, qos)
+        ready_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(Bool, "/ag_execution/ready", self._ready_cb, ready_qos)
+
+        self._observe_srv = self.create_service(Observe, "~/observe", self._observe_cb)
+        self._clear_srv = self.create_service(Trigger, "~/clear", self._clear_cb)
+        self._clear_aux_srv = self.create_service(Trigger, "~/clear_aux", self._clear_aux_cb)
+
+        # Startup calibration runs from a timer so the constructor never
+        # blocks the executor; the robot must be at home on the empty table.
+        self._startup_timer = self.create_timer(0.5, self._startup_tick)
+        self.get_logger().info("perception node up; waiting for robot home pose...")
+
+    # ---------------- subscriptions ----------------
+    def _depth_cb(self, msg):
+        with self._cond:
+            self._latest_depth = msg
+            self._cond.notify_all()
+
+    def _color_cb(self, msg):
+        with self._cond:
+            self._latest_color = msg
+            self._color_size = (msg.height, msg.width)
+            self._cond.notify_all()
+
+    def _info_cb(self, msg):
+        k = np.array(msg.k).reshape(3, 3)
+        if k[0, 0] > 0:
+            self._k_matrix = k
+
+    def _joint_cb(self, msg):
+        self._latest_joint_vel = dict(zip(msg.name, msg.velocity))
+
+    def _ready_cb(self, msg):
+        self._execution_ready = bool(msg.data)
+
+    def _startup_tick(self):
+        if self._ready:
+            return
+        if not self._execution_ready or self._latest_depth is None:
+            return
+        if not self._latest_joint_vel:
+            return
+        if max(abs(v) for v in self._latest_joint_vel.values()) > self.stationary_velocity:
+            return
+        try:
+            self._calibrate()
+        except RuntimeError as exc:
+            self.get_logger().warn(f"calibration not ready yet: {exc}")
+            return
+        self._ready = True
+        self._startup_timer.cancel()
+        self.get_logger().info("perception ready (camera calibrated)")
+
+    # ---------------- helpers ----------------
+    def _wait_stationary(self, timeout=10.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self._latest_joint_vel:
+                time.sleep(0.05)
+                continue
+            if max(abs(v) for v in self._latest_joint_vel.values()) < self.stationary_velocity:
+                return
+            time.sleep(0.05)
+        self.get_logger().warn("robot did not settle; fusing anyway")
+
+    def _wait_fresh_frame(self):
+        with self._cond:
+            deadline = time.monotonic() + self.fresh_timeout
+            while True:
+                msg = self._latest_depth
+                if msg is not None:
+                    key = _stamp_key(msg.header.stamp)
+                    if self._last_used_stamp is None or key > self._last_used_stamp:
+                        break
+                if time.monotonic() >= deadline:
+                    if msg is None:
+                        return None
+                    self.get_logger().warn("no fresh depth frame; reusing last one")
+                    return msg
+                self._cond.wait(0.05)
+            self._last_used_stamp = _stamp_key(msg.header.stamp)
+            return msg
+
+    def _camera_pose(self, stamp):
+        transform = None
+        for target_time in (stamp, rclpy.time.Time()):
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    self.base_frame, self.camera_frame, target_time, timeout=rclpy.duration.Duration(seconds=0.5)
+                )
+                break
+            except (LookupException, ConnectivityException, ExtrapolationException):
+                continue
+        if transform is None:
+            raise RuntimeError(
+                f"TF {self.camera_frame} -> {self.base_frame} unavailable"
+            )
+        q = transform.transform.rotation
+        t = transform.transform.translation
+        return pose_to_matrix(
+            [t.x, t.y, t.z], [q.x, q.y, q.z, q.w]
+        )
+
+    def _fallback_k(self):
+        focal = self.img_w / (2.0 * np.tan(self.hfov / 2.0))
+        return np.array(
+            [[focal, 0, self.img_w / 2.0], [0, focal, self.img_h / 2.0], [0, 0, 1]]
+        )
+
+    def _calibrate(self):
+        depth = self._latest_depth
+        if depth is None:
+            raise RuntimeError("no frame available for calibration")
+        k = self._k_matrix if self._k_matrix is not None else self._fallback_k()
+        pose = self._camera_pose(depth.header.stamp)
+        depth_img = self.bridge.imgmsg_to_cv2(depth, desired_encoding="32FC1")
+        self._signs = auto_calibrate(depth_img, k, pose, max_depth=self.calib_max_depth)
+        self.get_logger().info(f"calibration signs: {self._signs}")
+
+    def _convert_color(self, color_msg, depth_shape):
+        color = self.bridge.imgmsg_to_cv2(color_msg, desired_encoding="rgb8")
+        if color.shape[:2] != depth_shape:
+            out = np.zeros((*depth_shape, 3), dtype=np.uint8)
+            h = min(color.shape[0], depth_shape[0])
+            w = min(color.shape[1], depth_shape[1])
+            out[:h, :w] = color[:h, :w]
+            color = out
+        return color
+
+    # ---------------- services ----------------
+    def _clear_cb(self, request, response):
+        self.fusion.reset()
+        response.success = True
+        response.message = "world model cleared"
+        return response
+
+    def _clear_aux_cb(self, request, response):
+        self.fusion.clear_aux()
+        response.success = True
+        response.message = "auxiliary view dropped"
+        return response
+
+    def _observe_cb(self, request, response):
+        if not self._ready:
+            if not self._ready_warned:
+                self.get_logger().warn(
+                    "observe called before calibration finished; returning empty state"
+                )
+                self._ready_warned = True
+            response.height = Image()
+            response.uncertainty = Image()
+            response.color = Image()
+            response.mask = Image()
+            return response
+
+        depth_msg = self._wait_fresh_frame()
+        if depth_msg is None:
+            response.height = Image()
+            response.uncertainty = Image()
+            response.color = Image()
+            response.mask = Image()
+            return response
+
+        self._wait_stationary(timeout=2.0)
+        k = self._k_matrix if self._k_matrix is not None else self._fallback_k()
+        pose = self._camera_pose(depth_msg.header.stamp)
+        depth = self.bridge.imgmsg_to_cv2(depth_msg, desired_encoding="32FC1")
+        su, sv = self._signs
+
+        points, valid = backproject(depth, k, pose, u_sign=su, v_sign=sv)
+        color = self._latest_color
+        if color is not None:
+            color = self._convert_color(color, depth.shape)
+        else:
+            color = np.zeros((*depth.shape, 3), dtype=np.uint8)
+        snapshot = self.fusion.build_snapshot(points, valid, color)
+        height, uncertainty, color_map, mask = self.fusion.observe(
+            snapshot, bool(request.auxiliary_view)
+        )
+
+        header = depth_msg.header
+        response.height = self.bridge.cv2_to_imgmsg(height, encoding="32FC1")
+        response.uncertainty = self.bridge.cv2_to_imgmsg(uncertainty, encoding="32FC1")
+        response.color = self.bridge.cv2_to_imgmsg(color_map, encoding="rgb8")
+        response.mask = self.bridge.cv2_to_imgmsg((mask * 255).astype(np.uint8), encoding="mono8")
+        response.height.header = header
+        response.uncertainty.header = header
+        response.color.header = header
+        response.mask.header = header
+        return response
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = PerceptionNode()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        executor.shutdown()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

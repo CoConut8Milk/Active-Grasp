@@ -1,0 +1,10 @@
+# Execute a top-down grasp at grid cell (u, v).
+uint32 u
+uint32 v
+# Surface height above the table in meters, read from the heightmap.
+float32 height
+---
+bool success
+bool object_cleared
+float32 gripper_width
+

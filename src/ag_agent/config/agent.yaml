@@ -1,0 +1,33 @@
+ag_train:
+  ros__parameters:
+    use_sim_time: true
+    grid_height: 48
+    grid_width: 48
+    n_dirs: 8
+    n_views: 4
+    z_max: 0.35
+    max_steps: 25
+    # learning
+    lr: 0.0003
+    gamma: 0.9
+    batch_size: 64
+    capacity: 20000
+    target_update: 300
+    in_channels: 6
+    eps_start: 1.0
+    eps_end: 0.05
+    eps_decay_episodes: 300
+    # curriculum
+    min_objects: 2
+    max_objects: 8
+    curriculum_window: 20
+    curriculum_up: 0.70
+    curriculum_down: 0.30
+    # run
+    episodes: 400
+    save_every: 50
+    log_every: 5
+    seed: 0
+    checkpoint_dir: "checkpoints"
+    results_dir: "results"
+

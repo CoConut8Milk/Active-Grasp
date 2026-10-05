@@ -1,0 +1,23 @@
+perception_node:
+  ros__parameters:
+    use_sim_time: true
+    depth_topic: /ag_camera/depth/image_raw
+    color_topic: /ag_camera/image_raw
+    camera_info_topic: /ag_camera/depth/camera_info
+    joint_states_topic: /joint_states
+    base_frame: base_link
+    camera_frame: camera_link
+    grid_height: 48
+    grid_width: 48
+    workspace_x_min: 0.20
+    workspace_x_max: 0.70
+    workspace_y_min: -0.25
+    workspace_y_max: 0.25
+    z_max: 0.35
+    max_age: 8
+    stationary_velocity: 0.08
+    fresh_frame_timeout: 1.5
+    calib_max_depth: 1.1
+    hfov: 1.047197551
+    image_width: 320
+    image_height: 240

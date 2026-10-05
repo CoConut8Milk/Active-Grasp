@@ -1,0 +1,296 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="ag_tabletop">
+
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <physics name="physics_1s" default="1" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <gravity>0 0 -9.81</gravity>
+
+    <light name="workspace_light" type="point">
+      <pose>0.45 0.0 1.35 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.1 0.1 0.1 1</specular>
+      <attenuation>
+        <range>8</range>
+        <constant>0.5</constant>
+        <linear>0.1</linear>
+        <quadratic>0.01</quadratic>
+      </attenuation>
+      <cast_shadows>false</cast_shadows>
+    </light>
+
+    <!-- Table. Top surface at z = 0.78. The robot base sits at (0, 0, 0.78). -->
+    <model name="table">
+      <static>true</static>
+      <pose>0.4 0 0.39 0 0 0</pose>
+      <link name="table_link">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>1.3 1.0 0.78</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.35 0.3 0.25 1</ambient>
+            <diffuse>0.55 0.48 0.4 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>1.3 1.0 0.78</size>
+            </box>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0.6</mu>
+                <mu2>0.6</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+    </model>
+
+    <!-- Drop bin, right of the workspace. Interior ~0.14 x 0.10 x 0.15 m. -->
+    <model name="bin">
+      <static>true</static>
+      <pose>0.45 -0.34 0.78 0 0 0</pose>
+      <link name="bin_floor">
+        <pose>0 0 0.01 0 0 0</pose>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.16 0.12 0.02</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.1 0.2 0.3 1</ambient>
+            <diffuse>0.15 0.3 0.45 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.16 0.12 0.02</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+      <link name="bin_wall_far">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.16 0.01 0.16</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.1 0.2 0.3 1</ambient>
+            <diffuse>0.15 0.3 0.45 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.16 0.01 0.16</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+      <link name="bin_wall_near">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.16 0.01 0.16</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.1 0.2 0.3 1</ambient>
+            <diffuse>0.15 0.3 0.45 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.16 0.01 0.16</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+      <link name="bin_wall_left">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.01 0.12 0.16</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.1 0.2 0.3 1</ambient>
+            <diffuse>0.15 0.3 0.45 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.01 0.12 0.16</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+      <link name="bin_wall_right">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.01 0.12 0.16</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.1 0.2 0.3 1</ambient>
+            <diffuse>0.15 0.3 0.45 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.01 0.12 0.16</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+      <joint name="floor_to_wall_far" type="fixed">
+        <parent>bin_floor</parent>
+        <child>bin_wall_far</child>
+        <pose>0 -0.065 0.09 0 0 0</pose>
+      </joint>
+      <joint name="floor_to_wall_near" type="fixed">
+        <parent>bin_floor</parent>
+        <child>bin_wall_near</child>
+        <pose>0 0.065 0.09 0 0 0</pose>
+      </joint>
+      <joint name="floor_to_wall_left" type="fixed">
+        <parent>bin_floor</parent>
+        <child>bin_wall_left</child>
+        <pose>-0.085 0 0.09 0 0 0</pose>
+      </joint>
+      <joint name="floor_to_wall_right" type="fixed">
+        <parent>bin_floor</parent>
+        <child>bin_wall_right</child>
+        <pose>0.085 0 0.09 0 0 0</pose>
+      </joint>
+    </model>
+
+    <!-- Low boundary walls keep objects inside the 0.5 x 0.5 m workspace. -->
+    <model name="boundary_x_low">
+      <static>true</static>
+      <pose>0.20 0 0.81 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.01 0.52 0.06</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.3 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.01 0.52 0.06</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="boundary_x_high">
+      <static>true</static>
+      <pose>0.70 0 0.81 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.01 0.52 0.06</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.3 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.01 0.52 0.06</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="boundary_y_low">
+      <static>true</static>
+      <pose>0.45 -0.25 0.81 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.52 0.01 0.06</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.3 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.52 0.01 0.06</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+
+    <model name="boundary_y_high">
+      <static>true</static>
+      <pose>0.45 0.25 0.81 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.52 0.01 0.06</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.3 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.52 0.01 0.06</size>
+            </box>
+          </geometry>
+        </collision>
+      </link>
+    </model>
+
+  </world>
+</sdf>

@@ -1,0 +1,6 @@
+# Move the wrist camera to a pre-defined viewpoint, take a fused
+# observation there, then return to the home pose.
+uint32 view_id
+---
+bool success
+

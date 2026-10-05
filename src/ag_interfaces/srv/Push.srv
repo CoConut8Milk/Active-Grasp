@@ -1,0 +1,9 @@
+# Push the object at (u, v) horizontally.
+uint32 u
+uint32 v
+# Direction 0..7, counter-clockwise, 0 = +x of the workspace frame.
+uint32 direction
+float32 height
+---
+bool success
+
