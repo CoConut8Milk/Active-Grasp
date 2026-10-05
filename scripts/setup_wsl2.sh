@@ -11,10 +11,10 @@ set -euo pipefail
 step() { echo; echo "==> $1"; }
 
 # ---------------------------------------------------------------
-# 国内网络加速（可选）：取消下面几行的注释，换用清华/阿里镜像
+# 国内网络加速：设置 PIP_INDEX_URL 可让 pip 走清华镜像；
+# rosdep 与 PyTorch 下载失败时，脚本会自动改用国内镜像重试。
 # ---------------------------------------------------------------
 # export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-# export TORCH_INDEX=https://mirrors.aliyun.com/pytorch-wheels/cpu
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cpu}"
 
 step "0/5 基础工具"
@@ -50,6 +50,8 @@ sudo apt-get install -y \
   ros-humble-position-controllers \
   ros-humble-robot-state-publisher \
   ros-humble-xacro \
+  ros-humble-cv-bridge \
+  ros-humble-rosidl-default-generators \
   python3-colcon-common-extensions \
   python3-rosdep \
   python3-pip \
@@ -58,16 +60,39 @@ sudo apt-get install -y \
   python3-yaml \
   python3-matplotlib
 
-step "3/5 初始化 rosdep"
-sudo rosdep init || true
-rosdep update
+step "3/5 初始化 rosdep（国内网络自动改用清华镜像）"
+sudo rosdep init >/dev/null 2>&1 || true
+if ! rosdep update >/dev/null 2>&1; then
+  echo "  默认 rosdep 源不可用（国内网络常见），改用清华镜像重试..."
+  sudo mkdir -p /etc/ros/rosdep/sources.list.d
+  if [ ! -s /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+    sudo curl -fsSL -o /etc/ros/rosdep/sources.list.d/20-default.list \
+      https://mirrors.tuna.tsinghua.edu.cn/rosdistro/rosdep/sources.list.d/20-default.list || true
+  fi
+  sudo sed -i 's|raw.githubusercontent.com/ros/rosdistro/master|mirrors.tuna.tsinghua.edu.cn/rosdistro|g' \
+    /etc/ros/rosdep/sources.list.d/20-default.list || true
+  export ROSDISTRO_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/rosdistro/index-v4.yaml
+  grep -q "ROSDISTRO_INDEX_URL" ~/.bashrc || \
+    echo 'export ROSDISTRO_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/rosdistro/index-v4.yaml' >> ~/.bashrc
+  rosdep update || echo "  提示：rosdep 更新失败（不影响本项目编译运行，可稍后重试）"
+fi
 
 step "4/5 安装 Python 依赖"
 # numpy 固定 1.26.4：满足 PyTorch，同时保持 ROS2 Humble 的 NumPy 1.x C-ABI。
 # 不要升级到 numpy 2.x，会破坏 cv_bridge 等二进制扩展。
-python3 -m pip install --user --upgrade pip
-python3 -m pip install --user numpy==1.26.4
-python3 -m pip install --user torch==2.0.1 --index-url "$TORCH_INDEX"
+python3 -m pip install --user --upgrade pip || echo "  提示：pip 升级失败，继续使用系统 pip"
+if ! python3 -m pip install --user numpy==1.26.4; then
+  echo "  PyPI 默认源不可用，改用清华镜像重试..."
+  python3 -m pip install --user numpy==1.26.4 \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple || echo "  提示：numpy 安装失败，可稍后手动重试"
+fi
+if ! python3 -m pip install --user torch==2.0.1 --index-url "$TORCH_INDEX"; then
+  echo "  官方 PyTorch 源不可用，改用阿里云镜像重试..."
+  python3 -m pip install --user "torch==2.0.1+cpu" \
+    -f https://mirrors.aliyun.com/pytorch-wheels/cpu/ \
+    -i "${PIP_INDEX_URL:-https://pypi.org/simple}" || \
+    echo "  提示：PyTorch 安装失败，可稍后手动重试（训练时才需要）"
+fi
 
 step "5/5 写入环境变量"
 if ! grep -q "source /opt/ros/humble/setup.bash" ~/.bashrc; then
@@ -79,4 +104,3 @@ echo "安装完成。接下来按顺序执行："
 echo "  1) 重开一个终端（让环境变量生效）"
 echo "  2) cd <项目目录> && bash scripts/check_env.sh   # 环境自检"
 echo "  3) bash scripts/build.sh                        # 编译"
-

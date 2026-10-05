@@ -30,7 +30,9 @@ for pkg in \
   ros-humble-joint-state-broadcaster \
   ros-humble-joint-trajectory-controller \
   ros-humble-position-controllers \
-  ros-humble-robot-state-publisher; do
+  ros-humble-robot-state-publisher \
+  ros-humble-cv-bridge \
+  ros-humble-rosidl-default-generators; do
   dpkg -s "$pkg" >/dev/null 2>&1 && ok "$pkg" || bad "$pkg 未安装"
 done
 
@@ -64,4 +66,3 @@ else
   echo "$fails 项未通过 ✘  请对照 docs/06_常见问题排查.md 处理"
 fi
 exit "$fails"
-
