@@ -110,7 +110,7 @@ bash scripts/evaluate.sh checkpoints/agent_final.pth
 | 文档 | 内容 |
 |---|---|
 | [01_项目逻辑框架](docs/01_项目逻辑框架.md) | 研究动机、创新点、与文献的关系 |
-| [02_环境搭建](docs/02_环境搭建.md) | WSL2 / 原生 Ubuntu / Docker 三种路线 |
+| [02_环境搭建](docs/02_环境搭建.md) | 实验室电脑完整搭建教程（原生 Ubuntu / WSL2 / Docker + 自检脚本） |
 | [03_快速跑通流程](docs/03_快速跑通流程.md) | 从编译到评估的分步操作书 |
 | [04_代码导读](docs/04_代码导读.md) | 每个包的代码讲解与设计决策 |
 | [05_实验设计与基线](docs/05_实验设计与基线.md) | 基线、消融、指标、统计报告方法 |
@@ -121,4 +121,3 @@ bash scripts/evaluate.sh checkpoints/agent_final.pth
 ## 许可
 
 MIT License，见 [LICENSE](LICENSE)。
-

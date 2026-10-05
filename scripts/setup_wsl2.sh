@@ -1,24 +1,44 @@
 #!/usr/bin/env bash
-# One-shot Ubuntu 22.04 / WSL2 environment setup for ROS2 Humble + Gazebo Classic.
-# Run inside an Ubuntu 22.04 terminal:
+# active-grasp 一键环境安装脚本
+# 必须在 Ubuntu 22.04 (jammy) 里运行——本项目依赖 ROS2 Humble，不支持
+# Ubuntu 24.04 / ROS2 Jazzy。原生 Ubuntu 与 WSL2 通用。
+#
 #   bash scripts/setup_wsl2.sh
+#
+# 全程约 20–60 分钟（取决于网络与磁盘速度），无需独立显卡。
 set -euo pipefail
 
-sudo apt-get update
-sudo apt-get install -y \
-  curl gnupg2 lsb-release software-properties-common
+step() { echo; echo "==> $1"; }
 
+# ---------------------------------------------------------------
+# 国内网络加速（可选）：取消下面几行的注释，换用清华/阿里镜像
+# ---------------------------------------------------------------
+# export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+# export TORCH_INDEX=https://mirrors.aliyun.com/pytorch-wheels/cpu
+TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cpu}"
+
+step "0/5 基础工具"
+sudo apt-get update
+sudo apt-get install -y curl gnupg2 lsb-release software-properties-common
+
+step "1/5 添加 ROS2 软件源"
+CODENAME=$(. /etc/os-release && echo "$UBUNTU_CODENAME")
+if [ "$CODENAME" != "jammy" ]; then
+  echo "错误：检测到 Ubuntu $CODENAME，本项目只支持 22.04 (jammy)。" >&2
+  echo "请重装 Ubuntu 22.04，或在 WSL2 中安装 Ubuntu-22.04 发行版。" >&2
+  exit 1
+fi
 if [ ! -f /usr/share/keyrings/ros-archive-keyring.gpg ]; then
   sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     -o /usr/share/keyrings/ros-archive-keyring.gpg
 fi
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $CODENAME main" \
   | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
-
 sudo apt-get update
+
+step "2/5 安装 ROS2 Humble + Gazebo Classic（这一步最久）"
 sudo apt-get install -y \
   ros-humble-desktop \
-  ros-humble-ros-base \
   gazebo \
   ros-humble-gazebo-ros-pkgs \
   ros-humble-gazebo-ros2-control \
@@ -38,17 +58,25 @@ sudo apt-get install -y \
   python3-yaml \
   python3-matplotlib
 
+step "3/5 初始化 rosdep"
 sudo rosdep init || true
 rosdep update
 
+step "4/5 安装 Python 依赖"
+# numpy 固定 1.26.4：满足 PyTorch，同时保持 ROS2 Humble 的 NumPy 1.x C-ABI。
+# 不要升级到 numpy 2.x，会破坏 cv_bridge 等二进制扩展。
 python3 -m pip install --user --upgrade pip
 python3 -m pip install --user numpy==1.26.4
-python3 -m pip install --user torch==2.0.1 --index-url https://download.pytorch.org/whl/cpu
+python3 -m pip install --user torch==2.0.1 --index-url "$TORCH_INDEX"
 
+step "5/5 写入环境变量"
 if ! grep -q "source /opt/ros/humble/setup.bash" ~/.bashrc; then
   echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 fi
 
 echo
-echo "Setup complete. Open a new terminal, then run: bash scripts/build.sh"
+echo "安装完成。接下来按顺序执行："
+echo "  1) 重开一个终端（让环境变量生效）"
+echo "  2) cd <项目目录> && bash scripts/check_env.sh   # 环境自检"
+echo "  3) bash scripts/build.sh                        # 编译"
 
