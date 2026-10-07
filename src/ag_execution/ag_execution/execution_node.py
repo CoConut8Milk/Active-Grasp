@@ -29,7 +29,6 @@ class ExecutionNode(Node):
     def __init__(self):
         super().__init__("execution_node")
 
-        self.declare_parameter("use_sim_time", True)
         self.declare_parameter("urdf_file", "")
         self.declare_parameter("arm_action", "/arm_controller/follow_joint_trajectory")
         self.declare_parameter("gripper_topic", "/gripper_controller/commands")
@@ -41,11 +40,13 @@ class ExecutionNode(Node):
         self.declare_parameter("home_camera_pos", [0.68, 0.0, 0.62])
         self.declare_parameter("home_camera_look", [0.45, 0.0, 0.02])
         self.declare_parameter("bin_pos", [0.45, -0.34, 0.32])
-        self.declare_parameter("views", [
-            {"pos": [0.45, 0.00, 0.72], "look": [0.45, 0.0, 0.02]},
-            {"pos": [0.45, -0.28, 0.52], "look": [0.45, 0.0, 0.02]},
-            {"pos": [0.45, 0.28, 0.52], "look": [0.45, 0.0, 0.02]},
-            {"pos": [0.18, 0.00, 0.60], "look": [0.45, 0.0, 0.02]},
+        # ROS 2 参数不支持“字典列表”，这里用扁平数组：
+        # 每个视角 6 个数 = [pos_x, pos_y, pos_z, look_x, look_y, look_z]
+        self.declare_parameter("views_flat", [
+            0.45, 0.00, 0.72, 0.45, 0.0, 0.02,
+            0.45, -0.28, 0.52, 0.45, 0.0, 0.02,
+            0.45, 0.28, 0.52, 0.45, 0.0, 0.02,
+            0.18, 0.00, 0.60, 0.45, 0.0, 0.02,
         ])
         self.declare_parameter("grid_x_min", 0.20)
         self.declare_parameter("grid_x_max", 0.70)
@@ -64,12 +65,13 @@ class ExecutionNode(Node):
         self.declare_parameter("push_length", 0.09)
         self.declare_parameter("view_dwell", 1.2)
         self.declare_parameter("trajectory_steps", 8)
-        self.declare_parameter("seed_sets", [
-            [0.0, -0.4, 1.3, -0.5, 0.0, 0.0],
-            [0.0, -0.8, 1.6, -0.8, 0.0, 0.0],
-            [0.5, -0.5, 1.2, -0.7, 0.0, 0.0],
-            [-0.5, -0.5, 1.2, -0.7, 0.0, 0.0],
-            [0.0, -1.0, 1.0, -0.9, 0.0, 0.0],
+        # 同样用扁平数组：每个种子组 6 个关节角
+        self.declare_parameter("seed_sets_flat", [
+            0.0, -0.4, 1.3, -0.5, 0.0, 0.0,
+            0.0, -0.8, 1.6, -0.8, 0.0, 0.0,
+            0.5, -0.5, 1.2, -0.7, 0.0, 0.0,
+            -0.5, -0.5, 1.2, -0.7, 0.0, 0.0,
+            0.0, -1.0, 1.0, -0.9, 0.0, 0.0,
         ])
 
         urdf_file = self.get_parameter("urdf_file").value
@@ -81,6 +83,14 @@ class ExecutionNode(Node):
         p = self.get_parameter
         self.tool_link = p("tool_link").value
         self.camera_link = p("camera_link").value
+        views_flat = [float(v) for v in p("views_flat").value]
+        views = [
+            {
+                "pos": views_flat[i * 6: i * 6 + 3],
+                "look": views_flat[i * 6 + 3: i * 6 + 6],
+            }
+            for i in range(len(views_flat) // 6)
+        ]
         self.grid = {
             "x_min": p("grid_x_min").value, "x_max": p("grid_x_max").value,
             "y_min": p("grid_y_min").value, "y_max": p("grid_y_max").value,
@@ -88,7 +98,7 @@ class ExecutionNode(Node):
         }
         self.params = {
             "bin_pos": p("bin_pos").value,
-            "views": p("views").value,
+            "views": views,
             "gripper_close": p("gripper_close").value,
             "gripper_open": p("gripper_open").value,
             "approach_offset": p("approach_offset").value,
@@ -105,7 +115,10 @@ class ExecutionNode(Node):
         self.min_grasp_height = p("min_grasp_height").value
         self.held_q_sum = p("held_q_sum").value
         self.traj_steps = p("trajectory_steps").value
-        self.seed_sets = [list(s) for s in p("seed_sets").value]
+        seeds_flat = [float(v) for v in p("seed_sets_flat").value]
+        self.seed_sets = [
+            seeds_flat[i * 6: i * 6 + 6] for i in range(len(seeds_flat) // 6)
+        ]
 
         self._joint_positions = {}
         self._current_q = np.zeros(6)
@@ -129,8 +142,11 @@ class ExecutionNode(Node):
         self._home_srv = self.create_service(Trigger, "~/go_home", self._home_cb)
 
         self.get_logger().info("waiting for arm controller...")
-        if not self._arm_client.wait_for_server(timeout=30.0):
-            raise RuntimeError("arm controller action server never appeared")
+        # Gazebo 在 WSL 里启动可能要一两分钟，这里一直等到服务出现为止。
+        while rclpy.ok() and not self._arm_client.wait_for_server(timeout_sec=10.0):
+            self.get_logger().info(
+                "still waiting for /arm_controller action server ..."
+            )
         self._read_current_joints(timeout=5.0)
 
         self.home_q = self._solve_home()

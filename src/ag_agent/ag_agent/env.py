@@ -45,8 +45,12 @@ class ActiveGraspEnv:
         clients = [self._observe, self._grasp, self._push, self._view,
                    self._reset, self._clear, self._clear_aux]
         for cli in clients:
-            if not cli.wait_for_service(timeout_sec=30.0):
-                raise RuntimeError(f"service {cli.srv_name} unavailable")
+            # Gazebo 启动较慢时服务会晚到，这里一直等（每 10 秒提示一次）。
+            import rclpy
+            while not cli.wait_for_service(timeout_sec=10.0):
+                if not rclpy.ok():
+                    raise RuntimeError("ROS 已关闭，停止等待服务")
+                node.get_logger().info(f"waiting for service {cli.srv_name} ...")
 
     def _call(self, client, request, timeout=30.0):
         future = client.call_async(request)

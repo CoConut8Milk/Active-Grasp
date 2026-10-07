@@ -39,7 +39,6 @@ class PerceptionNode(Node):
     def __init__(self):
         super().__init__("perception_node")
 
-        self.declare_parameter("use_sim_time", True)
         self.declare_parameter("depth_topic", "/ag_camera/depth/image_raw")
         self.declare_parameter("color_topic", "/ag_camera/image_raw")
         self.declare_parameter("camera_info_topic", "/ag_camera/depth/camera_info")
