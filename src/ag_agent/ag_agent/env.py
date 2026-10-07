@@ -9,17 +9,27 @@ from ag_agent.actions import ActionSpace
 
 
 def _decode_image(msg):
-    dtype = np.float32 if "32FC1" in msg.encoding else np.uint8
+    """Convert a sensor_msgs/Image into an (H, W) or (H, W, 3) numpy array.
+
+    Handles both the float height/uncertainty maps and the uint8 color/mask
+    maps, and tolerates row padding (msg.step > width * bytes per pixel).
+    """
+    dtype = np.float32 if "32F" in msg.encoding else np.uint8
+    channels = 3 if ("rgb8" in msg.encoding or "bgr8" in msg.encoding) else 1
+    itemsize = np.dtype(dtype).itemsize
+    expected = msg.height * msg.width * channels
+
     arr = np.frombuffer(msg.data, dtype=dtype)
-    if len(arr) < msg.height * msg.width:
-        return np.zeros((msg.height, msg.width), dtype=dtype)
-    if dtype == np.float32:
-        return arr[: msg.height * msg.width].reshape(msg.height, msg.width)
-    step = max(msg.step // np.dtype(np.uint8).itemsize, msg.width * 3)
-    arr = arr.reshape(msg.height, step)
-    if "mono8" in msg.encoding:
-        return arr[:, : msg.width]
-    return arr[:, : msg.width * 3].reshape(msg.height, msg.width, 3)
+    if arr.size < expected:
+        shape = (msg.height, msg.width, 3) if channels == 3 else (msg.height, msg.width)
+        return np.zeros(shape, dtype=dtype)
+
+    row = msg.step // itemsize if msg.step else msg.width * channels
+    row = max(row, msg.width * channels)
+    arr = arr[: msg.height * row].reshape(msg.height, row)
+    if channels == 3:
+        return arr[:, : msg.width * 3].reshape(msg.height, msg.width, 3)
+    return arr[:, : msg.width]
 
 
 class ActiveGraspEnv:

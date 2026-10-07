@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from ag_perception.fusion import (
     HeightmapFusion,
@@ -57,6 +58,28 @@ def test_auto_calibrate_recovers_signs():
     depth, k, t = _flat_table_depth(u_sign=1.0, v_sign=-1.0)
     su, sv = auto_calibrate(depth, k, t, max_samples=1500)
     assert (su, sv) == (1.0, -1.0)
+
+
+def test_flat_table_cannot_observe_horizontal_sign():
+    """The mirrored view of a level table is level as well.
+
+    This is why the perception node takes the horizontal sign from the camera
+    convention instead of from the flatness estimate: both u choices fit the
+    plane equally well, so the estimate would otherwise be a coin flip.
+    """
+    depth, k, t = _flat_table_depth(u_sign=1.0, v_sign=-1.0)
+
+    def height_variance(su, sv):
+        points, valid = backproject(depth, k, t, u_sign=su, v_sign=sv)
+        return float(np.var(points[valid][:, 2]))
+
+    assert height_variance(1.0, -1.0) == pytest.approx(
+        height_variance(-1.0, -1.0), abs=1e-9
+    )
+    # The vertical sign, on the other hand, is clearly observable.
+    assert height_variance(1.0, -1.0) < height_variance(1.0, 1.0)
+    _, sv = auto_calibrate(depth, k, t, max_samples=1500)
+    assert sv == -1.0
 
 
 def test_snapshot_and_uncertainty():

@@ -58,6 +58,9 @@ class PerceptionNode(Node):
         self.declare_parameter("stationary_velocity", 0.08)
         self.declare_parameter("fresh_frame_timeout", 1.5)
         self.declare_parameter("calib_max_depth", 1.1)
+        # Image axis convention of the simulator (see perception.yaml).
+        self.declare_parameter("u_sign", -1.0)
+        self.declare_parameter("v_sign", -1.0)
         self.declare_parameter("hfov", 1.047197551)
         self.declare_parameter("image_width", 320)
         self.declare_parameter("image_height", 240)
@@ -72,6 +75,8 @@ class PerceptionNode(Node):
         self.stationary_velocity = p("stationary_velocity").value
         self.fresh_timeout = p("fresh_frame_timeout").value
         self.calib_max_depth = p("calib_max_depth").value
+        self.u_sign = float(p("u_sign").value)
+        self.v_sign = float(p("v_sign").value)
         self.hfov = p("hfov").value
         self.img_w = p("image_width").value
         self.img_h = p("image_height").value
@@ -329,8 +334,27 @@ class PerceptionNode(Node):
         k = self._k_matrix if self._k_matrix is not None else self._fallback_k()
         pose = self._camera_pose(depth.header.stamp)
         depth_img = self.bridge.imgmsg_to_cv2(depth, desired_encoding="32FC1")
-        self._signs = auto_calibrate(depth_img, k, pose, max_depth=self.calib_max_depth)
-        self.get_logger().info(f"calibration signs: {self._signs}")
+        est_u, est_v = auto_calibrate(
+            depth_img, k, pose, max_depth=self.calib_max_depth
+        )
+        # A level table looks level in the mirrored cloud too, so the flatness
+        # test can never observe the horizontal sign (measured: both u choices
+        # give exactly zero height variance). Only the vertical sign carries
+        # information - it tells us whether the camera is upside down. Take
+        # that from the data, and the horizontal sign from it as well, since
+        # u and v flip together when the camera rolls.
+        self._signs = (self.u_sign, self.v_sign)
+        if est_v != self.v_sign:
+            self.get_logger().warn(
+                f"flat-plane estimate says v_sign={est_v:+.0f} but the "
+                f"configured value is {self.v_sign:+.0f}; adopting the "
+                "estimate for both axes"
+            )
+            self._signs = (float(est_v), float(est_v))
+        self.get_logger().info(
+            f"camera signs: {self._signs} "
+            f"(flat-plane estimate {(est_u, est_v)}, u unobservable)"
+        )
 
     def _convert_color(self, color_msg, depth_shape):
         color = self.bridge.imgmsg_to_cv2(color_msg, desired_encoding="rgb8")

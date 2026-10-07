@@ -22,6 +22,12 @@ perception_node:
     stationary_velocity: 0.15
     fresh_frame_timeout: 1.5
     calib_max_depth: 1.1
+    # 相机像素轴与相机坐标系的关系（Gazebo Classic 渲染的是"相机看到的画面"：
+    # 图像向右 = 相机 -y，图像向下 = 相机 -z）。水平方向的正负号无法从一张
+    # 水平桌面的深度图里观测出来（镜像后的桌面依然是平的），所以这里按约定
+    # 固定；竖直方向由启动标定实测（可观测），用来判断相机是否倒装。
+    u_sign: -1.0
+    v_sign: -1.0
     hfov: 1.047197551
     image_width: 320
     image_height: 240
