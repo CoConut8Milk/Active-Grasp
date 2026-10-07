@@ -6,6 +6,7 @@ Usage:
 """
 
 import os
+import re
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -37,6 +38,12 @@ def generate_launch_description():
     robot_description = robot_description.replace(
         "__AG_CONTROLLERS_YAML__", controller_config
     )
+    # gazebo_ros2_control 插件会把整段 URDF 作为“参数覆盖规则”注入控制器管理器，
+    # 该解析基于 YAML：XML 注释、声明和换行都会破坏它（社区已知问题；xacro 生成的
+    # URDF 恰好没有注释且是单行，所以官方示例能跑）。这里清理成纯标签文本。
+    robot_description = re.sub(r"<!--.*?-->", " ", robot_description, flags=re.S)
+    robot_description = re.sub(r"<\?xml[^>]*\?>", "", robot_description)
+    robot_description = " ".join(robot_description.split())
     perception_config = os.path.join(
         pkg_ag_perception, "config", "perception.yaml"
     )

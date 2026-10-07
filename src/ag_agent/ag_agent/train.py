@@ -8,6 +8,7 @@ import random
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 import torch
 
 from ag_agent.env import ActiveGraspEnv
@@ -35,7 +36,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", default=None, help="checkpoint to resume")
     parser.add_argument("--episodes", type=int, default=None)
-    args = parser.parse_args()
+    args = parser.parse_args(remove_ros_args()[1:])
 
     rclpy.init()
     node = Node("ag_train")

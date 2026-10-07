@@ -5,6 +5,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 
 from ag_agent.env import ActiveGraspEnv
 from ag_agent.agent import DQNAgent
@@ -26,7 +27,7 @@ def main():
     parser.add_argument("--objects", type=int, default=5)
     parser.add_argument("--epsilon", type=float, default=0.05)
     parser.add_argument("--step-delay", type=float, default=0.5)
-    args = parser.parse_args()
+    args = parser.parse_args(remove_ros_args()[1:])
 
     rclpy.init()
     node = Node("ag_demo")

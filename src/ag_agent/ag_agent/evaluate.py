@@ -7,6 +7,7 @@ import os
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 
 from ag_agent.env import ActiveGraspEnv
 from ag_agent.agent import DQNAgent
@@ -19,7 +20,7 @@ def main():
     parser.add_argument("--objects", type=int, nargs="+", default=[2, 4, 6, 8])
     parser.add_argument("--epsilon", type=float, default=0.05)
     parser.add_argument("--out", default="results/evaluation.json")
-    args = parser.parse_args()
+    args = parser.parse_args(remove_ros_args()[1:])
 
     rclpy.init()
     node = Node("ag_evaluate")
