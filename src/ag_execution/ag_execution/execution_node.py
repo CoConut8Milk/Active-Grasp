@@ -215,7 +215,25 @@ class ExecutionNode(Node):
         # required for correct grasp-hold detection inside service callbacks.
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            rclpy.spin_once(self, timeout_sec=0.02)
+            self._spin_once()
+
+    def _spin_once(self, timeout_sec=0.02):
+        """Process one callback while blocking inside a service callback.
+
+        The node is spun by the main executor, which is busy inside this
+        callback, so we pump it manually. Falls back to a plain sleep if the
+        node already belongs to the executor we would spin.
+        """
+        try:
+            rclpy.spin_once(self, timeout_sec=timeout_sec)
+        except (ValueError, RuntimeError):
+            time.sleep(timeout_sec)
+
+    def _wait_future(self, future, timeout):
+        deadline = time.monotonic() + timeout
+        while not future.done() and time.monotonic() < deadline and rclpy.ok():
+            self._spin_once()
+        return future.done()
 
     # ---------------- IK helpers ----------------
     def _tool_pose(self, pos, rot):
@@ -265,17 +283,15 @@ class ExecutionNode(Node):
         goal.goal_time_tolerance = rclpy.duration.Duration(seconds=0.5).to_msg()
 
         future = self._arm_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
-        if not future.done() or future.result() is None:
+        if not self._wait_future(future, 10.0) or future.result() is None:
             return False
         goal_handle = future.result()
         if not goal_handle.accepted:
             return False
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(
-            self, result_future, timeout_sec=duration + 8.0
-        )
-        if not result_future.done() or result_future.result() is None:
+        if not self._wait_future(result_future, duration + 30.0):
+            return False
+        if result_future.result() is None:
             return False
         self._current_q = np.array(target_q, dtype=float)
         return result_future.result().result.error_code in (
@@ -326,8 +342,7 @@ class ExecutionNode(Node):
             req = Observe.Request()
             req.auxiliary_view = True
             future = self._observe_cli.call_async(req)
-            rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
-            return future.done() and future.result() is not None
+            return self._wait_future(future, 15.0) and future.result() is not None
         if kind == "home":
             return self._move_to_joints(self.home_q, step["dur"])
         raise ValueError(f"unknown plan step kind: {kind}")

@@ -99,8 +99,31 @@ class ActiveGraspEnv:
         req = Reset.Request()
         req.num_objects = int(num_objects)
         req.randomize_objects = bool(randomize)
-        rsp = self._call(self._reset, req)
+        rsp = None
+        for attempt in range(2):
+            try:
+                # The first reset races with gazebo still loading the arm:
+                # deleting/spawning entities can take tens of seconds there.
+                rsp = self._call(self._reset, req, timeout=120.0)
+                break
+            except TimeoutError:
+                self.node.get_logger().warn(
+                    f"/world_manager/reset_scene did not answer "
+                    f"(attempt {attempt + 1}); retrying ..."
+                )
+        if rsp is None:
+            raise RuntimeError(
+                "/world_manager/reset_scene timed out twice; check the "
+                "world_manager log and /spawn_entity in gazebo"
+            )
         self.n_objects = int(rsp.objects_spawned)
+        if self.n_objects <= 0:
+            raise RuntimeError(
+                "world_manager spawned 0 objects; check /spawn_entity in gazebo"
+            )
+        self.node.get_logger().info(
+            f"scene reset with {self.n_objects} objects"
+        )
         self.cleared = 0
         self.steps = 0
         self.last_state = self.observe()
@@ -126,7 +149,9 @@ class ActiveGraspEnv:
             req = Grasp.Request()
             req.u, req.v = u, v
             req.height = float(self.last_state[0, v, u])
-            rsp = self._call(self._grasp, req)
+            # A grasp plan is several trajectories long; WSL runs the sim well
+            # below real time, so allow plenty of wall-clock room.
+            rsp = self._call(self._grasp, req, timeout=180.0)
             self._trigger(self._clear_aux)
             next_state = self.observe()
             success = bool(rsp.success)
@@ -142,7 +167,7 @@ class ActiveGraspEnv:
             req.u, req.v = u, v
             req.direction = direction
             req.height = float(self.last_state[0, v, u])
-            rsp = self._call(self._push, req)
+            rsp = self._call(self._push, req, timeout=180.0)
             self._trigger(self._clear_aux)
             next_state = self.observe()
             delta = float(np.mean(np.abs(next_state[0] - before)))
@@ -154,7 +179,7 @@ class ActiveGraspEnv:
             before_u = float(np.mean(self.last_state[1]))
             req = MoveView.Request()
             req.view_id = view_id
-            rsp = self._call(self._view, req)
+            rsp = self._call(self._view, req, timeout=180.0)
             next_state = self.observe()
             after_u = float(np.mean(next_state[1]))
             reward = float(np.clip(2.0 * (before_u - after_u) - 0.05, -0.05, 1.0))

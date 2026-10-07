@@ -17,6 +17,7 @@ import numpy as np
 
 import rclpy
 from rclpy.node import Node
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
 from sensor_msgs.msg import Image, CameraInfo, JointState
@@ -111,12 +112,30 @@ class PerceptionNode(Node):
         self._still_since = None
 
         qos = qos_profile_sensor_data
-        self.create_subscription(Image, self.depth_topic, self._depth_cb, qos)
-        self.create_subscription(Image, self.color_topic, self._color_cb, qos)
-        self.create_subscription(CameraInfo, self.camera_info_topic, self._info_cb, qos)
-        self.create_subscription(JointState, self.joint_states_topic, self._joint_cb, qos)
+        # Sensor callbacks live in a reentrant group so depth frames keep
+        # arriving while the (blocking) observe service waits for a fresh one.
+        self._sensor_group = ReentrantCallbackGroup()
+        self.create_subscription(
+            Image, self.depth_topic, self._depth_cb, qos,
+            callback_group=self._sensor_group,
+        )
+        self.create_subscription(
+            Image, self.color_topic, self._color_cb, qos,
+            callback_group=self._sensor_group,
+        )
+        self.create_subscription(
+            CameraInfo, self.camera_info_topic, self._info_cb, qos,
+            callback_group=self._sensor_group,
+        )
+        self.create_subscription(
+            JointState, self.joint_states_topic, self._joint_cb, qos,
+            callback_group=self._sensor_group,
+        )
         ready_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.create_subscription(Bool, "/ag_execution/ready", self._ready_cb, ready_qos)
+        self.create_subscription(
+            Bool, "/ag_execution/ready", self._ready_cb, ready_qos,
+            callback_group=self._sensor_group,
+        )
 
         self._observe_srv = self.create_service(Observe, "~/observe", self._observe_cb)
         self._clear_srv = self.create_service(Trigger, "~/clear", self._clear_cb)

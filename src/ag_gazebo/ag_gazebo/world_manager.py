@@ -125,8 +125,12 @@ class WorldManager(Node):
         self.seed = self.get_parameter("seed").value
         self._rng = random.Random(self.seed)
 
-        self._spawn_cli = self.create_client(SpawnEntity, "/spawn_entity")
-        self._delete_cli = self.create_client(DeleteEntity, "/delete_entity")
+        # Blocking gazebo service calls are made from a dedicated helper node:
+        # the main node is single threaded and busy inside the reset callback,
+        # so spinning it re-entrantly would be unsafe.
+        self._io_node = rclpy.create_node("world_manager_io")
+        self._spawn_cli = self._io_node.create_client(SpawnEntity, "/spawn_entity")
+        self._delete_cli = self._io_node.create_client(DeleteEntity, "/delete_entity")
         self._reset_srv = self.create_service(Reset, "~/reset_scene", self._on_reset)
 
         self._spawned_names = []
@@ -142,7 +146,9 @@ class WorldManager(Node):
 
     def _call_blocking(self, cli, request, timeout=5.0):
         future = cli.call_async(request)
-        rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
+        deadline = time.monotonic() + timeout
+        while not future.done() and time.monotonic() < deadline:
+            rclpy.spin_once(self._io_node, timeout_sec=0.02)
         if not future.done() or future.result() is None:
             return None
         return future.result()
@@ -186,6 +192,12 @@ class WorldManager(Node):
         return poses
 
     def _on_reset(self, request, response):
+        # Gazebo may still be starting up when the first reset arrives; the
+        # factory service only appears once gzserver loaded its plugins.
+        if not self._spawn_cli.service_is_ready():
+            self.get_logger().warn("waiting for /spawn_entity to appear ...")
+            self._spawn_cli.wait_for_service(timeout_sec=90.0)
+            self.get_logger().info("/spawn_entity is available")
         self._delete_all()
         n = max(1, min(int(request.num_objects), 12))
 
@@ -196,6 +208,11 @@ class WorldManager(Node):
             ok = self._spawn_one(name, x, y, self.table_top_z + 0.03, yaw)
             if ok:
                 self._spawned_names.append(name)
+                self.get_logger().info(
+                    f"spawned {name} at ({x:.2f}, {y:.2f})"
+                )
+            else:
+                self.get_logger().warn(f"could not spawn {name}")
 
         # Let objects fall and settle before the agent observes the scene.
         # Wall-clock sleep: in realtime mode this equals sim time, and in the
@@ -204,6 +221,9 @@ class WorldManager(Node):
 
         response.success = True
         response.objects_spawned = len(self._spawned_names)
+        self.get_logger().info(
+            f"scene ready: {response.objects_spawned} objects on the table"
+        )
         return response
 
 
@@ -215,5 +235,9 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        try:
+            node._io_node.destroy_node()
+        except AttributeError:
+            pass
         node.destroy_node()
         rclpy.shutdown()
