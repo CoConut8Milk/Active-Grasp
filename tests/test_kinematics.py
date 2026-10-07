@@ -5,6 +5,7 @@ import numpy as np
 from ag_execution.kinematics import (
     RobotModel,
     look_at_matrix,
+    nearest_joint_branch,
     pose_from_rot_trans,
 )
 
@@ -49,6 +50,24 @@ def test_ik_grasp_points_across_workspace():
             assert q is not None, f"IK failed at ({x:.2f}, {y:.2f})"
             t = model.fk(q)["tool0"]
             assert np.linalg.norm(t[:3, 3] - [x, y, 0.095]) < 0.02
+
+
+def test_nearest_joint_branch_avoids_full_turn():
+    """+-pi describe the same pose but a full turn apart in joint space."""
+    model = _model()
+    lower, upper = model.limits
+    current = np.zeros(6)
+    current[3] = 3.14          # arm parked near the positive limit
+    target = current.copy()
+    target[3] = -3.14          # same pose, wrong branch coming out of IK
+
+    q = nearest_joint_branch(target, current, lower, upper)
+    assert abs(q[3] - 3.14) < 0.01
+    assert np.allclose(q[:3], target[:3])
+
+    # Ordinary mid-range targets must be left untouched.
+    mid = np.array([0.1, -0.2, 0.3, -0.4, 0.5, -0.6])
+    assert np.allclose(nearest_joint_branch(mid, np.zeros(6), lower, upper), mid)
 
 
 def test_ik_survives_bad_seeds_and_targets():

@@ -53,6 +53,32 @@ def pose_from_rot_trans(rotation, translation):
     return t
 
 
+def nearest_joint_branch(target_q, current_q, lower, upper):
+    """Return the joint vector (mod 2*pi) that is nearest to ``current_q``.
+
+    These joints are revolute with a roughly +-pi range, so q and q +- 2*pi
+    describe the same end-effector pose but are a full turn apart in joint
+    space. IK happily returns the far branch; commanding it makes
+    joint_trajectory_controller chase a 2*pi error until it aborts
+    ("State tolerances failed for joint 4: Position Error: -6.283").
+    The URDF limits are a hair tighter than +-pi (3.1416), so the shifted
+    value is clamped into the limits, which costs at most that epsilon in
+    pose error while saving a full revolution of travel.
+    """
+    q = np.array(target_q, dtype=float).copy()
+    current = np.asarray(current_q, dtype=float)
+    lower = np.asarray(lower, dtype=float)
+    upper = np.asarray(upper, dtype=float)
+    for i in range(q.size):
+        turns = round((current[i] - q[i]) / (2.0 * np.pi))
+        if turns == 0:
+            continue
+        candidate = float(np.clip(q[i] + 2.0 * np.pi * turns, lower[i], upper[i]))
+        if abs(candidate - current[i]) + 1e-9 < abs(q[i] - current[i]):
+            q[i] = candidate
+    return q
+
+
 class RobotModel:
     """Minimal URDF kinematic model for serial arms with fixed grippers."""
 

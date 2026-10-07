@@ -18,7 +18,7 @@ from std_srvs.srv import Trigger
 
 from ag_interfaces.srv import Grasp, Push, MoveView, Observe
 from ag_execution.kinematics import (
-    RobotModel, look_at_matrix, pose_from_rot_trans,
+    RobotModel, look_at_matrix, nearest_joint_branch, pose_from_rot_trans,
 )
 from ag_execution.primitives import (
     grasp_plan, push_plan, view_plan, grid_to_xy, interpolate_joints,
@@ -268,6 +268,9 @@ class ExecutionNode(Node):
         if not np.all(np.isfinite(target_q)):
             self.get_logger().warn("refusing to send a non-finite trajectory")
             return False
+        target_q = nearest_joint_branch(
+            target_q, self._current_q, self.joint_lower, self.joint_upper
+        )
         # Stay strictly inside the joint limits: the controller rejects
         # trajectories that touch them, and a state message can report a joint
         # a hair beyond its limit.
@@ -299,7 +302,9 @@ class ExecutionNode(Node):
         goal.goal_time_tolerance = rclpy.duration.Duration(seconds=0.5).to_msg()
 
         future = self._arm_client.send_goal_async(goal)
-        if not self._wait_future(future, 10.0):
+        # A busy controller can take a while to answer, and giving up while it
+        # still starts the trajectory would desynchronise our joint bookkeeping.
+        if not self._wait_future(future, 30.0):
             self.get_logger().warn("arm controller did not answer the goal request")
             return False
         if future.result() is None:
