@@ -67,15 +67,26 @@ class ActiveGraspEnv:
     def observe(self, auxiliary=False):
         req = Observe.Request()
         req.auxiliary_view = bool(auxiliary)
-        # Wait until perception has calibrated and returns real data.
-        deadline = time.monotonic() + 40.0
+        # Wait until perception has calibrated and returns real data: on a
+        # fresh launch the arm first drives home and the camera calibration
+        # only starts once the robot stands still.
+        deadline = time.monotonic() + 120.0
+        attempts = 0
         while True:
             rsp = self._call(self._observe, req)
             if len(rsp.height.data) > 0 or time.monotonic() > deadline:
                 break
+            attempts += 1
+            if attempts % 10 == 1:
+                self.node.get_logger().info(
+                    "waiting for perception to finish camera calibration ..."
+                )
             time.sleep(0.5)
         if len(rsp.height.data) == 0:
-            raise RuntimeError("perception never produced a state")
+            raise RuntimeError(
+                "perception never produced a state; check the perception_node "
+                "log for 'not calibrated yet: ...' messages"
+            )
         height = _decode_image(rsp.height)
         uncertainty = _decode_image(rsp.uncertainty)
         color = _decode_image(rsp.color).astype(np.float32)

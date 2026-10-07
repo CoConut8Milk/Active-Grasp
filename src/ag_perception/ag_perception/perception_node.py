@@ -9,6 +9,7 @@ At startup the node waits for the empty table, auto-calibrates the camera's
 image mirroring, and only then accepts requests.
 """
 
+import math
 import threading
 import time
 
@@ -90,12 +91,22 @@ class PerceptionNode(Node):
         self._latest_color = None
         self._color_size = None
         self._latest_joint_vel = {}
+        self._joint_pos = {}
+        self._joint_time = None
+        self._joint_speed = 0.0
         self._last_used_stamp = None
         self._k_matrix = None
         self._signs = None
         self._execution_ready = False
         self._ready = False
         self._ready_warned = False
+        # Startup diagnostics: how long we tolerate the missing
+        # /ag_execution/ready latch, and how often we explain what we wait for.
+        self.ready_grace = 20.0
+        self.status_period = 3.0
+        self._start_time = time.monotonic()
+        self._last_status = 0.0
+        self._still_since = None
 
         qos = qos_profile_sensor_data
         self.create_subscription(Image, self.depth_topic, self._depth_cb, qos)
@@ -112,7 +123,11 @@ class PerceptionNode(Node):
         # Startup calibration runs from a timer so the constructor never
         # blocks the executor; the robot must be at home on the empty table.
         self._startup_timer = self.create_timer(0.5, self._startup_tick)
-        self.get_logger().info("perception node up; waiting for robot home pose...")
+        self.get_logger().info(
+            f"perception node up; depth={self.depth_topic} "
+            f"color={self.color_topic} joints={self.joint_states_topic}"
+        )
+        self.get_logger().info("waiting for depth frames and a settled robot...")
 
     # ---------------- subscriptions ----------------
     def _depth_cb(self, msg):
@@ -132,28 +147,89 @@ class PerceptionNode(Node):
             self._k_matrix = k
 
     def _joint_cb(self, msg):
-        self._latest_joint_vel = dict(zip(msg.name, msg.velocity))
+        now = time.monotonic()
+        positions = dict(zip(msg.name, msg.position))
+        with self._cond:
+            if self._joint_pos and self._joint_time is not None:
+                dt = max(now - self._joint_time, 1e-3)
+                self._joint_speed = max(
+                    (
+                        abs(positions[name] - self._joint_pos[name]) / dt
+                        for name in positions
+                        if name in self._joint_pos
+                    ),
+                    default=0.0,
+                )
+            self._joint_pos = positions
+            self._joint_time = now
+            self._latest_joint_vel = dict(zip(msg.name, msg.velocity))
 
     def _ready_cb(self, msg):
         self._execution_ready = bool(msg.data)
 
+    def _status(self, text):
+        now = time.monotonic()
+        if now - self._last_status < self.status_period:
+            return
+        self._last_status = now
+        self.get_logger().warn(f"not calibrated yet: {text}")
+
+    def _motion(self):
+        """Largest joint speed we can measure, in rad/s or m/s.
+
+        Velocities from /joint_states are preferred; when a broadcaster does
+        not publish the velocity array we fall back to finite differences of
+        the position array, so readiness never depends on one message field.
+        """
+        with self._cond:
+            velocities = [
+                abs(float(v)) for v in self._latest_joint_vel.values()
+                if math.isfinite(float(v))
+            ]
+            speed = self._joint_speed
+        if velocities:
+            return max(velocities), "joint velocity"
+        if self._joint_pos:
+            return speed, "joint position delta"
+        return None, "no /joint_states yet"
+
     def _startup_tick(self):
         if self._ready:
             return
-        if not self._execution_ready or self._latest_depth is None:
+        with self._cond:
+            has_depth = self._latest_depth is not None
+        if not has_depth:
+            self._status(f"waiting for depth frames on {self.depth_topic}")
             return
-        if not self._latest_joint_vel:
+        speed, how = self._motion()
+        if speed is None:
+            self._status(how)
             return
-        if max(abs(v) for v in self._latest_joint_vel.values()) > self.stationary_velocity:
+        if speed > self.stationary_velocity:
+            self._still_since = None
+            self._status(f"robot still moving ({how} = {speed:.3f})")
+            return
+        now = time.monotonic()
+        if self._still_since is None:
+            self._still_since = now
+            return
+        if now - self._still_since < 1.0:
+            return
+        if not self._execution_ready and now - self._start_time < self.ready_grace:
+            self._status("waiting for /ag_execution/ready (arm still going home)")
             return
         try:
             self._calibrate()
         except RuntimeError as exc:
-            self.get_logger().warn(f"calibration not ready yet: {exc}")
+            # Most often the camera is not facing the table yet: keep trying.
+            self._still_since = None
+            self._status(str(exc))
             return
         self._ready = True
         self._startup_timer.cancel()
-        self.get_logger().info("perception ready (camera calibrated)")
+        self.get_logger().info(
+            f"perception ready (camera calibrated, signs={self._signs})"
+        )
 
     # ---------------- helpers ----------------
     def _wait_stationary(self, timeout=10.0):

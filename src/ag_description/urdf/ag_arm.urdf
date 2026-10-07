@@ -235,7 +235,16 @@
     <origin xyz="0 0 0.08" rpy="0 0 0"/>
   </joint>
 
-  <link name="tool0"/>
+  <!-- tool0 must carry an inertial: Gazebo merges ("lumps") fixed joints into
+       the parent link, and a massless lumped link takes its child joints
+       (the two gripper fingers) down with it. -->
+  <link name="tool0">
+    <inertial>
+      <mass value="0.02"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="5e-06" ixy="0" ixz="0" iyy="5e-06" iyz="0" izz="5e-06"/>
+    </inertial>
+  </link>
 
   <!-- ======================= gripper fingers ======================= -->
   <!-- q=0 is open (gap 4 cm); q=0.018 is closed (gap 0.4 cm). -->
@@ -333,6 +342,18 @@
   <gazebo reference="finger_right_link">
     <mu1>1.0</mu1>
     <mu2>1.0</mu2>
+  </gazebo>
+
+  <!-- Gazebo Classic lumps fixed joints by default. Without the flags below
+       tool0 / camera_link disappear from the SDF and the finger joints that
+       hang off tool0 are dropped, which makes gazebo_ros2_control print
+       "Skipping joint in the URDF named 'finger_left' which is not in the
+       gazebo model" and the gripper controller fail to activate. -->
+  <gazebo reference="tool0_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
+  </gazebo>
+  <gazebo reference="camera_joint">
+    <preserveFixedJoint>true</preserveFixedJoint>
   </gazebo>
 
   <gazebo>
