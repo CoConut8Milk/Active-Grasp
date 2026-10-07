@@ -336,7 +336,9 @@
   </gazebo>
 
   <gazebo>
-    <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so"/>
+    <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">
+      <parameters>__AG_CONTROLLERS_YAML__</parameters>
+    </plugin>
   </gazebo>
 
   <ros2_control name="GazeboSystem" type="system">

@@ -26,12 +26,16 @@ def generate_launch_description():
     world_realtime = PathJoinSubstitution([pkg_ag_gazebo, "worlds", "tabletop.world"])
     world_fast = PathJoinSubstitution([pkg_ag_gazebo, "worlds", "tabletop_fast.world"])
 
+    controller_config = os.path.join(
+        pkg_ag_description, "config", "ag_arm_controllers.yaml"
+    )
     urdf_file = os.path.join(pkg_ag_description, "urdf", "ag_arm.urdf")
     with open(urdf_file, "r") as f:
         robot_description = f.read()
-
-    controller_config = os.path.join(
-        pkg_ag_description, "config", "ag_arm_controllers.yaml"
+    # gazebo_ros2_control 插件会自己创建 controller_manager，
+    # 需要把控制器配置文件的安装路径写进 URDF 模板占位符。
+    robot_description = robot_description.replace(
+        "__AG_CONTROLLERS_YAML__", controller_config
     )
     perception_config = os.path.join(
         pkg_ag_perception, "config", "perception.yaml"
@@ -78,14 +82,6 @@ def generate_launch_description():
                     "-entity", "ag_arm",
                     "-x", "0.0", "-y", "0.0", "-z", "0.78",
                     "-timeout", "30.0",
-                ],
-                output="screen",
-            ),
-            Node(
-                package="controller_manager",
-                executable="ros2_control_node",
-                parameters=[
-                    {"robot_description": robot_description}, controller_config
                 ],
                 output="screen",
             ),
