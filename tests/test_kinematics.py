@@ -51,6 +51,30 @@ def test_ik_grasp_points_across_workspace():
             assert np.linalg.norm(t[:3, 3] - [x, y, 0.095]) < 0.02
 
 
+def test_ik_survives_bad_seeds_and_targets():
+    """A joint a hair outside its limit used to make scipy raise.
+
+    scipy's least_squares rejects an infeasible x0 ("x0 is infeasible"), which
+    killed the execution node in the middle of an episode, so ik() has to
+    sanitise seeds itself.
+    """
+    model = _model()
+    orient = np.diag([1.0, -1.0, -1.0])
+    target = _pose(orient, [0.45, 0.0, 0.095])
+    bad_seeds = [
+        np.array([0.0, 0.0, 0.0, 0.0, 0.0, -3.5]),   # beyond a joint limit
+        np.array([np.nan, 0.0, 0.0, 0.0, 0.0, 0.0]),  # NaN from a state glitch
+        np.array([0.0, -2.8, 2.8, 0.0, 0.0, 3.1416]),  # exactly on the limits
+    ]
+    q = model.ik_retry(target, bad_seeds, n_random=4)
+    assert q is not None
+    assert np.all(np.isfinite(q))
+
+    target_nan = target.copy()
+    target_nan[0, 3] = np.nan
+    assert model.ik(target_nan, np.zeros(6)) is None
+
+
 def test_ik_viewpoints_and_home():
     model = _model()
     cam_tool = model.camera_in_tool()

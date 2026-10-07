@@ -115,6 +115,7 @@ class ExecutionNode(Node):
         self.min_grasp_height = p("min_grasp_height").value
         self.held_q_sum = p("held_q_sum").value
         self.traj_steps = p("trajectory_steps").value
+        self.joint_lower, self.joint_upper = self.model.limits
         seeds_flat = [float(v) for v in p("seed_sets_flat").value]
         self.seed_sets = [
             seeds_flat[i * 6: i * 6 + 6] for i in range(len(seeds_flat) // 6)
@@ -159,20 +160,24 @@ class ExecutionNode(Node):
 
     # ---------------- state helpers ----------------
     def _joint_cb(self, msg):
+        if not all(math.isfinite(v) for v in msg.position):
+            # A single bad state message must not poison the IK seeds.
+            return
         self._joint_positions = dict(zip(msg.name, msg.position))
         if not self._have_state:
             try:
                 q = np.array([self._joint_positions[n] for n in self.model.arm_joints])
                 if q.shape == (6,):
-                    self._current_q = q
+                    self._current_q = np.clip(q, self.joint_lower, self.joint_upper)
                     self._have_state = True
             except KeyError:
                 pass
         else:
             try:
-                self._current_q = np.array(
+                q = np.array(
                     [self._joint_positions[n] for n in self.model.arm_joints]
                 )
+                self._current_q = np.clip(q, self.joint_lower, self.joint_upper)
             except KeyError:
                 pass
 
@@ -259,8 +264,19 @@ class ExecutionNode(Node):
     def _move_to_joints(self, target_q, duration):
         if duration <= 0:
             return True
+        target_q = np.asarray(target_q, dtype=float)
+        if not np.all(np.isfinite(target_q)):
+            self.get_logger().warn("refusing to send a non-finite trajectory")
+            return False
+        # Stay strictly inside the joint limits: the controller rejects
+        # trajectories that touch them, and a state message can report a joint
+        # a hair beyond its limit.
+        target_q = np.clip(target_q, self.joint_lower + 1e-6, self.joint_upper - 1e-6)
         waypoints = interpolate_joints(
             self._current_q, target_q, steps=self.traj_steps
+        )
+        waypoints = np.clip(
+            waypoints, self.joint_lower + 1e-6, self.joint_upper - 1e-6
         )
         traj = JointTrajectory()
         traj.joint_names = list(self.model.arm_joints)
@@ -290,14 +306,25 @@ class ExecutionNode(Node):
             return False
         result_future = goal_handle.get_result_async()
         if not self._wait_future(result_future, duration + 30.0):
+            self.get_logger().warn("timed out waiting for the arm controller result")
             return False
         if result_future.result() is None:
             return False
+        result = result_future.result().result
+        if result.error_code not in (FollowJointTrajectory.Result.SUCCESSFUL, 0):
+            # The controller sometimes reports a tolerance violation even
+            # though the arm stopped exactly where we asked; check the joint
+            # states before throwing the motion away.
+            self._sleep(0.5)
+            error = float(np.max(np.abs(self._current_q - target_q)))
+            self.get_logger().warn(
+                f"arm controller returned error_code={int(result.error_code)}; "
+                f"max joint error after settling is {error:.4f} rad"
+            )
+            if error > 0.05:
+                return False
         self._current_q = np.array(target_q, dtype=float)
-        return result_future.result().result.error_code in (
-            FollowJointTrajectory.Result.SUCCESSFUL,
-            0,
-        )
+        return True
 
     def _set_gripper(self, positions, duration):
         msg = Float64MultiArray()
@@ -320,8 +347,11 @@ class ExecutionNode(Node):
         if kind == "move":
             target = self._tool_pose(step["pos"], step["rot"])
             q = self._solve(target)
-            if q is None or not self._move_to_joints(q, step["dur"]):
-                self.get_logger().warn(f"move failed to {step['pos']}")
+            if q is None:
+                self.get_logger().warn(f"IK found no solution for {step['pos']}")
+                return False
+            if not self._move_to_joints(q, step["dur"]):
+                self.get_logger().warn(f"trajectory did not reach {step['pos']}")
                 return False
             return True
         if kind == "gripper":
@@ -336,7 +366,10 @@ class ExecutionNode(Node):
             )
             tool_target = cam_target @ self.model.camera_in_tool()
             q = self._solve(tool_target)
-            if q is None or not self._move_to_joints(q, step["dur"]):
+            if q is None:
+                self.get_logger().warn(f"IK found no solution for view {step['pos']}")
+                return False
+            if not self._move_to_joints(q, step["dur"]):
                 return False
             self._sleep(step["dwell"])
             req = Observe.Request()
@@ -349,82 +382,101 @@ class ExecutionNode(Node):
 
     # ---------------- services ----------------
     def _home_cb(self, request, response):
-        response.success = self._move_to_joints(self.home_q, 1.2)
+        try:
+            response.success = self._move_to_joints(self.home_q, 1.2)
+        except Exception as exc:
+            self.get_logger().error(f"go_home crashed: {type(exc).__name__}: {exc}")
+            response.success = False
         response.message = "home reached" if response.success else "home failed"
         return response
 
     def _grasp_cb(self, request, response):
-        u, v = int(request.u), int(request.v)
-        z_top = float(request.height)
-        if z_top < self.min_grasp_height:
-            response.success = False
-            response.object_cleared = False
-            response.gripper_width = 0.0
-            return response
-        x, y = grid_to_xy(self.grid, u, v)
-        plan = grasp_plan(self.params, x, y, z_top)
+        response.success = False
+        response.object_cleared = False
+        response.gripper_width = 0.0
+        try:
+            u, v = int(request.u), int(request.v)
+            z_top = float(request.height)
+            if z_top < self.min_grasp_height:
+                return response
+            x, y = grid_to_xy(self.grid, u, v)
+            plan = grasp_plan(self.params, x, y, z_top)
 
-        held = False
-        abort = False
-        for step in plan:
-            if step["kind"] == "hold_check":
-                held = self._step(step)
-                if not held:
-                    abort = True
-                    break
-            else:
-                if not self._step(step):
-                    abort = True
-                    break
+            held = False
+            abort = False
+            for step in plan:
+                if step["kind"] == "hold_check":
+                    held = self._step(step)
+                    if not held:
+                        abort = True
+                        break
+                else:
+                    if not self._step(step):
+                        abort = True
+                        break
 
-        if abort:
-            self._set_gripper(self.params["gripper_open"], 0.3)
-            if not self._move_to_joints(self.home_q, 1.2):
-                self.get_logger().warn("recovery: home move failed")
+            if abort:
+                self._set_gripper(self.params["gripper_open"], 0.3)
+                if not self._move_to_joints(self.home_q, 1.2):
+                    self.get_logger().warn("recovery: home move failed")
 
-        response.success = held
-        response.object_cleared = held
-        response.gripper_width = self._gripper_width()
+            response.success = held
+            response.object_cleared = held
+            response.gripper_width = self._gripper_width()
+        except Exception as exc:
+            self.get_logger().error(
+                f"grasp crashed: {type(exc).__name__}: {exc}; recovering"
+            )
+            try:
+                self._move_to_joints(self.home_q, 1.2)
+            except Exception:
+                pass
         return response
 
     def _push_cb(self, request, response):
-        u, v = int(request.u), int(request.v)
-        direction = int(request.direction) % 8
-        z_top = float(request.height)
-        if z_top < self.min_grasp_height:
-            response.success = False
-            return response
-        x, y = grid_to_xy(self.grid, u, v)
-        theta = direction * math.pi / 4.0
-        plan = push_plan(self.params, x, y, theta)
+        response.success = False
+        try:
+            u, v = int(request.u), int(request.v)
+            direction = int(request.direction) % 8
+            z_top = float(request.height)
+            if z_top < self.min_grasp_height:
+                return response
+            x, y = grid_to_xy(self.grid, u, v)
+            theta = direction * math.pi / 4.0
+            plan = push_plan(self.params, x, y, theta)
 
-        ok = True
-        for step in plan:
-            if not self._step(step):
-                ok = False
-                break
-        if not ok:
-            if not self._move_to_joints(self.home_q, 1.2):
-                self.get_logger().warn("recovery: home move failed")
-        response.success = ok
+            ok = True
+            for step in plan:
+                if not self._step(step):
+                    ok = False
+                    break
+            if not ok:
+                if not self._move_to_joints(self.home_q, 1.2):
+                    self.get_logger().warn("recovery: home move failed")
+            response.success = ok
+        except Exception as exc:
+            self.get_logger().error(f"push crashed: {type(exc).__name__}: {exc}")
         return response
 
     def _view_cb(self, request, response):
-        view_id = int(request.view_id)
-        views = self.params["views"]
-        if not 0 <= view_id < len(views):
-            response.success = False
-            return response
-        plan = view_plan(self.params, view_id)
-        ok = True
-        for step in plan:
-            if not self._step(step):
-                ok = False
-                break
-        if not ok:
-            if not self._move_to_joints(self.home_q, 1.2):
-                self.get_logger().warn("recovery: home move failed")
-        response.success = ok
+        response.success = False
+        try:
+            view_id = int(request.view_id)
+            views = self.params["views"]
+            if not 0 <= view_id < len(views):
+                return response
+            plan = view_plan(self.params, view_id)
+            ok = True
+            for step in plan:
+                if not self._step(step):
+                    ok = False
+                    break
+            if not ok:
+                if not self._move_to_joints(self.home_q, 1.2):
+                    self.get_logger().warn("recovery: home move failed")
+            response.success = ok
+        except Exception as exc:
+            self.get_logger().error(f"move_view crashed: {type(exc).__name__}: {exc}")
         return response
 
 

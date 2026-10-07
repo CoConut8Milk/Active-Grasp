@@ -107,7 +107,10 @@ class WorldManager(Node):
         self.declare_parameter("workspace_y_min", -0.25)
         self.declare_parameter("workspace_y_max", 0.25)
         self.declare_parameter("table_top_z", 0.78)
-        self.declare_parameter("spawn_margin", 0.035)
+        # Keep clutter inside the region the arm can actually reach: the IK is
+        # validated for x in [0.24, 0.66], y in [-0.20, 0.20], so spawning
+        # closer to the workspace border only produces unreachable grasps.
+        self.declare_parameter("spawn_margin", 0.06)
         self.declare_parameter("max_spawn_attempts", 40)
         self.declare_parameter("settle_time", 1.2)
         self.declare_parameter("seed", 0)

@@ -176,7 +176,18 @@ class RobotModel:
            max_nfev=150):
         """Solve IK for the 6D pose of `link`. Returns joints or None."""
         target_t = np.asarray(target_t, dtype=float)
+        if not np.all(np.isfinite(target_t)):
+            return None
         lower, upper = self.limits
+        seed = np.asarray(seed, dtype=float)
+        if seed.shape != (6,):
+            return None
+        # scipy refuses to start from an infeasible x0, and a joint that is
+        # sitting exactly on its limit (or a NaN from a glitchy state message)
+        # counts as infeasible. Clamp into the interior instead of raising:
+        # one bad seed must never be able to kill the whole node.
+        seed = np.nan_to_num(seed, nan=0.0, posinf=0.0, neginf=0.0)
+        seed = np.clip(seed, lower + 1e-9, upper - 1e-9)
         target_p = target_t[:3, 3]
         target_r = target_t[:3, :3]
 
@@ -187,13 +198,17 @@ class RobotModel:
             rvec = Rotation.from_matrix(r_err).as_rotvec()
             return np.concatenate([p_err, ori_weight * rvec])
 
-        result = least_squares(
-            residual,
-            x0=np.asarray(seed, dtype=float),
-            bounds=(lower, upper),
-            method="trf",
-            max_nfev=max_nfev,
-        )
+        try:
+            result = least_squares(
+                residual,
+                x0=seed,
+                bounds=(lower, upper),
+                method="trf",
+                max_nfev=max_nfev,
+            )
+        except (ValueError, RuntimeError):
+            # "x0 is infeasible" and friends: treat as an unconverged seed.
+            return None
         t = self.fk(result.x)[link]
         pos_err = float(np.linalg.norm(target_p - t[:3, 3]))
         rot_err = float(
@@ -207,12 +222,18 @@ class RobotModel:
         lower, upper = self.limits
         rng = np.random.default_rng(random_seed)
         for seed in seeds:
-            q = self.ik(target_t, seed, link=link, **kwargs)
+            try:
+                q = self.ik(target_t, seed, link=link, **kwargs)
+            except Exception:  # defensive: never crash the node
+                q = None
             if q is not None:
                 return q
         for _ in range(int(n_random)):
             seed = lower + (upper - lower) * rng.random(6)
-            q = self.ik(target_t, seed, link=link, **kwargs)
+            try:
+                q = self.ik(target_t, seed, link=link, **kwargs)
+            except Exception:
+                q = None
             if q is not None:
                 return q
         return None
