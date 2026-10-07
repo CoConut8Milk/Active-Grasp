@@ -27,3 +27,14 @@ def test_valid_mask():
     assert mask[space.encode_view(0)]
     assert not mask[space.encode_grasp(0, 0)]
 
+
+def test_valid_mask_excludes_unreliable_border():
+    """The depth image border is noise, and the agent must never grasp there."""
+    space = ActionSpace(48, 48, n_dirs=8, n_views=4)
+    state = np.zeros((6, 48, 48), dtype=np.float32)
+    state[5, 0, 47] = 1.0    # permanent corner artefact seen in gazebo
+    state[5, 24, 24] = 1.0   # a real object in the middle of the table
+    mask = space.valid_mask(state)
+    assert not mask[space.encode_grasp(47, 0)]
+    assert mask[space.encode_grasp(24, 24)]
+

@@ -21,6 +21,8 @@ class GreedyPolicy:
             return self.action_space.encode_view(
                 self._rng.integers(self.action_space.n_views)
             )
+        # `mask` already excludes the unreliable image border, so the tallest
+        # cell below is always something we can actually reach.
         ys, xs = np.nonzero(occupied)
         best = int(np.argmax(height[ys, xs]))
         v, u = ys[best], xs[best]

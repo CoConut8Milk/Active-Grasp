@@ -299,16 +299,22 @@ class ExecutionNode(Node):
         goal.goal_time_tolerance = rclpy.duration.Duration(seconds=0.5).to_msg()
 
         future = self._arm_client.send_goal_async(goal)
-        if not self._wait_future(future, 10.0) or future.result() is None:
+        if not self._wait_future(future, 10.0):
+            self.get_logger().warn("arm controller did not answer the goal request")
+            return False
+        if future.result() is None:
+            self.get_logger().warn("arm controller goal request returned nothing")
             return False
         goal_handle = future.result()
         if not goal_handle.accepted:
+            self.get_logger().warn("arm controller rejected the trajectory")
             return False
         result_future = goal_handle.get_result_async()
         if not self._wait_future(result_future, duration + 30.0):
             self.get_logger().warn("timed out waiting for the arm controller result")
             return False
         if result_future.result() is None:
+            self.get_logger().warn("arm controller returned an empty result")
             return False
         result = result_future.result().result
         if result.error_code not in (FollowJointTrajectory.Result.SUCCESSFUL, 0):

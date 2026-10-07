@@ -58,6 +58,9 @@ class PerceptionNode(Node):
         self.declare_parameter("stationary_velocity", 0.08)
         self.declare_parameter("fresh_frame_timeout", 1.5)
         self.declare_parameter("calib_max_depth", 1.1)
+        # Pixels this close to the image border carry unreliable depth in
+        # Gazebo Classic and would otherwise show up as permanent tall cells.
+        self.declare_parameter("valid_border", 3)
         # Image axis convention of the simulator (see perception.yaml).
         self.declare_parameter("u_sign", -1.0)
         self.declare_parameter("v_sign", -1.0)
@@ -75,6 +78,7 @@ class PerceptionNode(Node):
         self.stationary_velocity = p("stationary_velocity").value
         self.fresh_timeout = p("fresh_frame_timeout").value
         self.calib_max_depth = p("calib_max_depth").value
+        self.valid_border = int(p("valid_border").value)
         self.u_sign = float(p("u_sign").value)
         self.v_sign = float(p("v_sign").value)
         self.hfov = p("hfov").value
@@ -407,6 +411,12 @@ class PerceptionNode(Node):
         su, sv = self._signs
 
         points, valid = backproject(depth, k, pose, u_sign=su, v_sign=sv)
+        b = self.valid_border
+        if b > 0:
+            valid[:b, :] = False
+            valid[-b:, :] = False
+            valid[:, :b] = False
+            valid[:, -b:] = False
         color = self._latest_color
         if color is not None:
             color = self._convert_color(color, depth.shape)

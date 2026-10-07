@@ -22,6 +22,9 @@ perception_node:
     stationary_velocity: 0.15
     fresh_frame_timeout: 1.5
     calib_max_depth: 1.1
+    # 深度图最外圈像素在 Gazebo Classic 里不可靠，会形成"永远存在的高点"
+    # （每次 episode 都指向同一个角落格子）。这些像素直接丢弃。
+    valid_border: 3
     # 相机像素轴与相机坐标系的关系（Gazebo Classic 渲染的是"相机看到的画面"：
     # 图像向右 = 相机 -y，图像向下 = 相机 -z）。水平方向的正负号无法从一张
     # 水平桌面的深度图里观测出来（镜像后的桌面依然是平的），所以这里按约定
