@@ -15,7 +15,11 @@ perception_node:
     workspace_y_max: 0.25
     z_max: 0.35
     max_age: 8
-    stationary_velocity: 0.08
+    # 判定"机械臂已静止"的速度阈值（rad/s 或 m/s）。Gazebo Classic 用位置差分
+    # 报告关节速度，仿真慢于实时（WSL 下常见 real-time factor≈0.3）时会残留
+    # 0.05~0.1 的噪声速度；真正的轨迹运动在 1.0 以上。取 0.15 既能忽略噪声，
+    # 又不会把运动中误判为静止。
+    stationary_velocity: 0.15
     fresh_frame_timeout: 1.5
     calib_max_depth: 1.1
     hfov: 1.047197551

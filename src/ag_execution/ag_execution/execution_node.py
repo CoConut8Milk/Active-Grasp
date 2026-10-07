@@ -153,6 +153,7 @@ class ExecutionNode(Node):
         self.get_logger().info("moving to home pose...")
         if not self._move_to_joints(self.home_q, 2.0):
             raise RuntimeError("could not reach home pose at startup")
+        self._check_gripper_ready()
         self._ready_pub.publish(Bool(data=True))
         self.get_logger().info("execution ready")
 
@@ -181,6 +182,33 @@ class ExecutionNode(Node):
             timeout -= 0.05
         if not self._have_state:
             self.get_logger().warn("no joint state; assuming all-zero configuration")
+
+    def _check_gripper_ready(self, timeout=5.0):
+        """Fail loudly when the finger joints never show up in /joint_states.
+
+        Those joints only appear when gazebo_ros2_control managed to bind them
+        and the gripper controller is active; otherwise every grasp would fail
+        the hold check with no obvious explanation.
+        """
+        needed = ("finger_left", "finger_right")
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if all(name in self._joint_positions for name in needed):
+                self.get_logger().info(
+                    "gripper joints online: "
+                    + ", ".join(f"{n}={self._joint_positions[n]:.4f}" for n in needed)
+                )
+                return True
+            rclpy.spin_once(self, timeout_sec=0.05)
+        missing = [n for n in needed if n not in self._joint_positions]
+        self.get_logger().error(
+            "gripper joints missing from /joint_states: "
+            + ", ".join(missing)
+            + " -> gripper_controller is not active, every grasp will fail. "
+            "Look for 'Skipping joint in the URDF named ...' or "
+            "'Failed to activate controller : gripper_controller' in the log."
+        )
+        return False
 
     def _sleep(self, seconds):
         # Spin while sleeping so subscriptions (joint_states) keep updating;

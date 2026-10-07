@@ -94,6 +94,8 @@ class PerceptionNode(Node):
         self._joint_pos = {}
         self._joint_time = None
         self._joint_speed = 0.0
+        self._joint_speed_joint = ""
+        self._joint_names_logged = False
         self._last_used_stamp = None
         self._k_matrix = None
         self._signs = None
@@ -152,17 +154,27 @@ class PerceptionNode(Node):
         with self._cond:
             if self._joint_pos and self._joint_time is not None:
                 dt = max(now - self._joint_time, 1e-3)
-                self._joint_speed = max(
-                    (
-                        abs(positions[name] - self._joint_pos[name]) / dt
-                        for name in positions
-                        if name in self._joint_pos
-                    ),
-                    default=0.0,
-                )
+                speeds = {
+                    name: abs(positions[name] - self._joint_pos[name]) / dt
+                    for name in positions if name in self._joint_pos
+                }
+                if speeds:
+                    self._joint_speed_joint = max(speeds, key=speeds.get)
+                    self._joint_speed = speeds[self._joint_speed_joint]
             self._joint_pos = positions
             self._joint_time = now
             self._latest_joint_vel = dict(zip(msg.name, msg.velocity))
+            first_names = (
+                sorted(positions)
+                if positions and not self._joint_names_logged
+                else None
+            )
+            if first_names is not None:
+                self._joint_names_logged = True
+        if first_names is not None:
+            self.get_logger().info(
+                f"joint states seen ({len(first_names)}): {first_names}"
+            )
 
     def _ready_cb(self, msg):
         self._execution_ready = bool(msg.data)
@@ -175,22 +187,26 @@ class PerceptionNode(Node):
         self.get_logger().warn(f"not calibrated yet: {text}")
 
     def _motion(self):
-        """Largest joint speed we can measure, in rad/s or m/s.
+        """Largest joint speed we can measure, plus a human readable source.
 
-        Velocities from /joint_states are preferred; when a broadcaster does
-        not publish the velocity array we fall back to finite differences of
-        the position array, so readiness never depends on one message field.
+        Gazebo Classic differentiates joint positions to report velocities,
+        which leaves a noisy offset behind when the simulation runs below real
+        time. The position delta measured against the wall clock is therefore
+        preferred, with the published velocity array as a fallback so that
+        readiness never depends on a single message field.
         """
         with self._cond:
             velocities = [
-                abs(float(v)) for v in self._latest_joint_vel.values()
+                (abs(float(v)), name) for name, v in self._latest_joint_vel.items()
                 if math.isfinite(float(v))
             ]
             speed = self._joint_speed
-        if velocities:
-            return max(velocities), "joint velocity"
+            speed_joint = self._joint_speed_joint
         if self._joint_pos:
-            return speed, "joint position delta"
+            return speed, f"joint '{speed_joint}' position delta"
+        if velocities:
+            value, name = max(velocities)
+            return value, f"joint '{name}' velocity"
         return None, "no /joint_states yet"
 
     def _startup_tick(self):
@@ -213,7 +229,7 @@ class PerceptionNode(Node):
         if self._still_since is None:
             self._still_since = now
             return
-        if now - self._still_since < 1.0:
+        if now - self._still_since < 1.5:
             return
         if not self._execution_ready and now - self._start_time < self.ready_grace:
             self._status("waiting for /ag_execution/ready (arm still going home)")

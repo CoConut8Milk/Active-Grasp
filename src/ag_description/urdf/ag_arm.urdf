@@ -359,6 +359,10 @@
   <gazebo>
     <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">
       <parameters>__AG_CONTROLLERS_YAML__</parameters>
+      <!-- 位置命令接口在插件里是按 P 控制器实现的（默认增益 0.1 太小，
+           重力和仿真步长会让机械臂以 ~0.1 rad/s 缓慢下沉漂移）。调大增益
+           后机械臂能真正"站住"，感知标定与抓取精度都会明显变好。 -->
+      <position_proportional_gain>10.0</position_proportional_gain>
     </plugin>
   </gazebo>
 
